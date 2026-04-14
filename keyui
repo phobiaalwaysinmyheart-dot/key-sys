@@ -1,0 +1,1325 @@
+--[[
+    ╔══════════════════════════════════════════════════════════════╗
+    ║              HYPERION Key System  v1.0                       ║
+    ║                      by Phobia                               ║
+    ║           Premium Auth UI — Dark Purple / Black              ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    USAGE:
+        local KeySystem = loadstring(game:HttpGet("..."))()
+        local result = KeySystem:Init()
+        -- result.Passed      → bool
+        -- result.AccessType  → "Free" | "Keyless" | "Premium" | "Lifetime"
+        -- result.DiscordID   → string
+        -- result.Username    → string
+
+    CONFIGURATION is at the top of this file (CONFIG block).
+--]]
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 1 · CONFIGURATION
+-- ════════════════════════════════════════════════════════════════
+
+local CONFIG = {
+
+    -- ── Identity ───────────────────────────────────────────────
+    Title        = "HYPERION",
+    Subtitle     = "Authentication Required",
+    Version      = "v1.4  ·  Build 0142",
+    LogoAssetID  = "rbxassetid://6031280882",   -- replace with your logo
+
+    -- ── Access Mode ────────────────────────────────────────────
+    -- "Keyless"  → no key needed, skip straight through
+    -- "Free"     → show key input + Get Key button
+    -- "Premium"  → show premium badge, no key input
+    -- "Lifetime" → show lifetime badge, no key input
+    AccessMode   = "Keyless",
+
+    -- ── Features ───────────────────────────────────────────────
+    RequireDiscord    = true,   -- ask for Discord ID on first run
+    AllowSkipDiscord  = false,  -- let user skip Discord entry
+    ShowGetKeyButton  = true,   -- only visible when AccessMode = "Free"
+    GetKeyURL         = "https://linkvertise.com/your-link-here",
+
+    -- ── Valid Keys (only used when AccessMode = "Free") ────────
+    -- Leave empty {} to disable key checking on client side
+    ValidKeys = {
+        -- "HYPERION-XXXX-XXXX-XXXX",
+    },
+
+    -- ── Discord ID Validation ──────────────────────────────────
+    -- Roblox Discord IDs are 17-19 digit numbers
+    DiscordIDPattern = "^%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d?%d?%d?$",
+
+    -- ── Storage ────────────────────────────────────────────────
+    StorageFolder   = "Hyperion",
+    StorageFile     = "userdata.json",
+
+    -- ── Theme ──────────────────────────────────────────────────
+    Colors = {
+        Background   = Color3.fromRGB(8,  6,  18),   -- near-black
+        Surface      = Color3.fromRGB(14, 10, 30),   -- deep panel
+        Panel        = Color3.fromRGB(20, 15, 42),   -- elevated panel
+        PanelBorder  = Color3.fromRGB(55, 35, 110),  -- subtle border
+        Accent       = Color3.fromRGB(130, 80, 255), -- purple accent
+        AccentSoft   = Color3.fromRGB(90,  50, 200), -- darker accent
+        AccentGlow   = Color3.fromRGB(160,100,255),  -- glow colour
+        Text         = Color3.fromRGB(235,230,255),  -- primary text
+        TextMuted    = Color3.fromRGB(140,125,185),  -- muted text
+        TextFaint    = Color3.fromRGB(80,  70, 115), -- very faint
+        Success      = Color3.fromRGB(80,  210,130), -- green
+        Warning      = Color3.fromRGB(255,190, 60),  -- amber
+        Error        = Color3.fromRGB(255, 75, 85),  -- red
+        Info         = Color3.fromRGB(100,170,255),  -- blue
+        BadgePremium = Color3.fromRGB(200,155, 60),  -- gold
+        BadgeLife    = Color3.fromRGB(100,230,180),  -- teal
+        BadgeFree    = Color3.fromRGB(100,160,255),  -- blue
+        BadgeKeyless = Color3.fromRGB(130, 80,255),  -- purple
+    },
+
+    -- ── Sizing ─────────────────────────────────────────────────
+    WindowSize   = UDim2.new(0, 480, 0, 620),
+    CornerRadius = 14,
+    Padding      = 20,
+}
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 2 · SERVICES & LOCALS
+-- ════════════════════════════════════════════════════════════════
+
+local Players       = game:GetService("Players")
+local TweenService  = game:GetService("TweenService")
+local RunService    = game:GetService("RunService")
+local LP            = Players.LocalPlayer
+local PlayerGui     = LP:WaitForChild("PlayerGui")
+
+local KeySystem = {}
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 3 · FILE STORAGE HELPERS
+-- ════════════════════════════════════════════════════════════════
+
+local Storage = {}
+
+-- Safely check if executor supports file functions
+local _hasFS = (typeof(isfile) == "function") and
+               (typeof(writefile) == "function") and
+               (typeof(readfile) == "function")
+
+local _hasFolderFS = _hasFS and (typeof(isfolder) == "function") and
+                                (typeof(makefolder) == "function")
+
+-- Get the full file path for storage
+local function _storagePath()
+    return CONFIG.StorageFolder .. "/" .. CONFIG.StorageFile
+end
+
+-- Ensure the storage folder exists
+local function _ensureFolder()
+    if not _hasFolderFS then return end
+    pcall(function()
+        if not isfolder(CONFIG.StorageFolder) then
+            makefolder(CONFIG.StorageFolder)
+        end
+    end)
+end
+
+-- Encode a table to JSON-like string (simple, no external lib needed)
+local function _encode(data)
+    local parts = {}
+    for k, v in pairs(data) do
+        local vStr
+        if type(v) == "string" then
+            vStr = '"' .. tostring(v):gsub('"', '\\"') .. '"'
+        elseif type(v) == "number" or type(v) == "boolean" then
+            vStr = tostring(v)
+        else
+            vStr = '"' .. tostring(v) .. '"'
+        end
+        parts[#parts + 1] = '"' .. tostring(k) .. '":' .. vStr
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- Decode a simple JSON-like string back to a table
+local function _decode(str)
+    local result = {}
+    if type(str) ~= "string" then return result end
+    -- string fields
+    for k, v in str:gmatch('"([%w_]+)"%s*:%s*"([^"]*)"') do
+        result[k] = v
+    end
+    -- number/bool fields
+    for k, v in str:gmatch('"([%w_]+)"%s*:%s*([%d%.%-]+)') do
+        result[k] = tonumber(v) or v
+    end
+    for k, v in str:gmatch('"([%w_]+)"%s*:%s*(true)') do
+        result[k] = true
+    end
+    for k, v in str:gmatch('"([%w_]+)"%s*:%s*(false)') do
+        result[k] = false
+    end
+    return result
+end
+
+-- Load user data from disk; returns {} if unavailable or corrupt
+function Storage.Load()
+    if not _hasFS then return {} end
+    local ok, raw = pcall(function()
+        local path = _storagePath()
+        if isfile(path) then
+            return readfile(path)
+        end
+        return nil
+    end)
+    if not ok or not raw then return {} end
+    local data = _decode(raw)
+    -- Sanitise: only keep expected keys with string/number values
+    local safe = {}
+    local allowed = {lastKey=1, discordID=1, username=1, displayName=1,
+                     accessType=1, lastLogin=1}
+    for k, v in pairs(data) do
+        if allowed[k] and (type(v) == "string" or type(v) == "number") then
+            safe[k] = tostring(v)
+        end
+    end
+    return safe
+end
+
+-- Save user data to disk
+function Storage.Save(data)
+    if not _hasFS then return false end
+    local ok = pcall(function()
+        _ensureFolder()
+        writefile(_storagePath(), _encode(data))
+    end)
+    return ok
+end
+
+-- Clear saved user data
+function Storage.Clear()
+    if not _hasFS then return false end
+    local ok = pcall(function()
+        if isfile(_storagePath()) then
+            writefile(_storagePath(), "{}")
+        end
+    end)
+    return ok
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 4 · UI HELPER LIBRARY
+-- ════════════════════════════════════════════════════════════════
+
+local UI = {}
+local C  = CONFIG.Colors
+
+-- Shorthand tween
+local function Tween(obj, info, goals)
+    return TweenService:Create(obj, info, goals):Play()
+end
+
+local FadeInfo  = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SlideInfo = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local QuickInfo = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- Create a UICorner
+local function Corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or CONFIG.CornerRadius)
+    c.Parent = parent
+    return c
+end
+
+-- Create a UIStroke border
+local function Stroke(parent, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or C.PanelBorder
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = parent
+    return s
+end
+
+-- Create a UIPadding
+local function Padding(parent, all, top, bottom, left, right)
+    local p = Instance.new("UIPadding")
+    local a = UDim.new(0, all or 0)
+    p.PaddingTop    = UDim.new(0, top    or (all or 0))
+    p.PaddingBottom = UDim.new(0, bottom or (all or 0))
+    p.PaddingLeft   = UDim.new(0, left   or (all or 0))
+    p.PaddingRight  = UDim.new(0, right  or (all or 0))
+    p.Parent = parent
+    return p
+end
+
+-- Create a gradient UIGradient
+local function Gradient(parent, colorSeq, rotation)
+    local g = Instance.new("UIGradient")
+    g.Color    = colorSeq
+    g.Rotation = rotation or 135
+    g.Parent   = parent
+    return g
+end
+
+-- Base Frame constructor
+function UI.Frame(parent, props)
+    local f = Instance.new("Frame")
+    f.BackgroundColor3 = props.Color or C.Surface
+    f.BackgroundTransparency = props.Transparency or 0
+    f.Size   = props.Size   or UDim2.new(1,0,1,0)
+    f.Position = props.Position or UDim2.new(0,0,0,0)
+    f.AnchorPoint = props.Anchor or Vector2.new(0,0)
+    f.BorderSizePixel = 0
+    f.ClipsDescendants = props.Clip ~= nil and props.Clip or false
+    f.Name = props.Name or "Frame"
+    f.Parent = parent
+    if props.Corner ~= false then Corner(f, props.Corner) end
+    return f
+end
+
+-- Text label constructor
+function UI.Label(parent, props)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size      = props.Size     or UDim2.new(1,0,0,20)
+    l.Position  = props.Position or UDim2.new(0,0,0,0)
+    l.AnchorPoint = props.Anchor or Vector2.new(0,0)
+    l.Text      = props.Text     or ""
+    l.TextColor3 = props.TextColor or C.Text
+    l.TextSize  = props.TextSize  or 14
+    l.Font      = props.Font      or Enum.Font.GothamBold
+    l.TextXAlignment = props.AlignX or Enum.TextXAlignment.Left
+    l.TextYAlignment = props.AlignY or Enum.TextYAlignment.Center
+    l.TextTransparency = props.Transparency or 0
+    l.RichText  = props.Rich or false
+    l.Name = props.Name or "Label"
+    l.Parent = parent
+    return l
+end
+
+-- TextBox constructor
+function UI.TextBox(parent, props)
+    local t = Instance.new("TextBox")
+    t.BackgroundColor3 = props.Color or C.Panel
+    t.BackgroundTransparency = props.BgTransparency or 0
+    t.Size      = props.Size     or UDim2.new(1,0,0,40)
+    t.Position  = props.Position or UDim2.new(0,0,0,0)
+    t.AnchorPoint = props.Anchor or Vector2.new(0,0)
+    t.Text      = props.Text     or ""
+    t.PlaceholderText = props.Placeholder or ""
+    t.TextColor3 = props.TextColor or C.Text
+    t.PlaceholderColor3 = props.PlaceholderColor or C.TextFaint
+    t.TextSize  = props.TextSize  or 13
+    t.Font      = props.Font      or Enum.Font.Gotham
+    t.ClearTextOnFocus = props.ClearOnFocus ~= nil and props.ClearOnFocus or false
+    t.TextXAlignment = props.AlignX or Enum.TextXAlignment.Left
+    t.BorderSizePixel = 0
+    t.ClipsDescendants = true
+    t.Name = props.Name or "TextBox"
+    t.Parent = parent
+    Corner(t, props.Corner or 8)
+    Padding(t, nil, 0, 0, 12, 12)
+    Stroke(t, C.PanelBorder, 1)
+    -- Focus glow
+    t.Focused:Connect(function()
+        Tween(t, QuickInfo, {BackgroundColor3 = C.AccentSoft})
+    end)
+    t.FocusLost:Connect(function()
+        Tween(t, QuickInfo, {BackgroundColor3 = props.Color or C.Panel})
+    end)
+    return t
+end
+
+-- Button constructor
+function UI.Button(parent, props)
+    local btn = Instance.new("TextButton")
+    btn.BackgroundColor3 = props.Color or C.Accent
+    btn.Size      = props.Size     or UDim2.new(1,0,0,40)
+    btn.Position  = props.Position or UDim2.new(0,0,0,0)
+    btn.AnchorPoint = props.Anchor or Vector2.new(0,0)
+    btn.Text      = props.Text     or "Button"
+    btn.TextColor3 = props.TextColor or Color3.new(1,1,1)
+    btn.TextSize  = props.TextSize  or 13
+    btn.Font      = props.Font      or Enum.Font.GothamBold
+    btn.AutoButtonColor = false
+    btn.BorderSizePixel = 0
+    btn.Name = props.Name or "Button"
+    btn.Parent = parent
+    Corner(btn, props.Corner or 8)
+
+    -- Hover / press animations
+    local base = props.Color or C.Accent
+    btn.MouseEnter:Connect(function()
+        Tween(btn, QuickInfo, {BackgroundColor3 = props.HoverColor or C.AccentGlow})
+    end)
+    btn.MouseLeave:Connect(function()
+        Tween(btn, QuickInfo, {BackgroundColor3 = base})
+    end)
+    btn.MouseButton1Down:Connect(function()
+        Tween(btn, QuickInfo, {BackgroundColor3 = props.PressColor or C.AccentSoft})
+    end)
+    btn.MouseButton1Up:Connect(function()
+        Tween(btn, QuickInfo, {BackgroundColor3 = props.HoverColor or C.AccentGlow})
+    end)
+
+    if props.Callback then
+        btn.MouseButton1Click:Connect(props.Callback)
+    end
+    return btn
+end
+
+-- Image label constructor
+function UI.Image(parent, props)
+    local img = Instance.new("ImageLabel")
+    img.BackgroundTransparency = 1
+    img.Size      = props.Size     or UDim2.new(0, 64, 0, 64)
+    img.Position  = props.Position or UDim2.new(0, 0, 0, 0)
+    img.AnchorPoint = props.Anchor or Vector2.new(0, 0)
+    img.Image     = props.Image    or ""
+    img.ImageColor3 = props.Color  or Color3.new(1,1,1)
+    img.ImageTransparency = props.Transparency or 0
+    img.Name = props.Name or "Image"
+    img.Parent = parent
+    if props.Corner then Corner(img, props.Corner) end
+    return img
+end
+
+-- Divider / separator
+function UI.Divider(parent, yOffset)
+    local d = UI.Frame(parent, {
+        Name  = "Divider",
+        Color = C.PanelBorder,
+        Size  = UDim2.new(1,-32,0,1),
+        Position = UDim2.new(0,16,0, yOffset or 0),
+        Corner = false,
+    })
+    d.BackgroundTransparency = 0.6
+    return d
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 5 · NOTIFICATION / TOAST SYSTEM
+-- ════════════════════════════════════════════════════════════════
+
+local Toasts = {}   -- active toast frames
+local _toastHolder  -- set after UI built
+
+local TOAST_TYPE_COLORS = {
+    Success = C.Success,
+    Error   = C.Error,
+    Warning = C.Warning,
+    Info    = C.Info,
+}
+
+local function ShowToast(message, kind, duration)
+    if not _toastHolder then return end
+    kind     = kind     or "Info"
+    duration = duration or 3
+
+    -- Container
+    local toast = UI.Frame(_toastHolder, {
+        Name  = "Toast_" .. tick(),
+        Color = C.Panel,
+        Size  = UDim2.new(1,0,0,44),
+        Corner = 8,
+    })
+    Stroke(toast, TOAST_TYPE_COLORS[kind] or C.Accent, 1, 0.4)
+    Padding(toast, nil, 0, 0, 10, 10)
+
+    -- Accent bar on left
+    local bar = UI.Frame(toast, {
+        Name  = "Bar",
+        Color = TOAST_TYPE_COLORS[kind] or C.Accent,
+        Size  = UDim2.new(0,3,1,0),
+        Position = UDim2.new(0,0,0,0),
+        Corner = 3,
+    })
+
+    -- Message text
+    UI.Label(toast, {
+        Name      = "Msg",
+        Text      = message,
+        TextColor = C.Text,
+        TextSize  = 12,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(1,-18,1,0),
+        Position  = UDim2.new(0,14,0,0),
+        AlignX    = Enum.TextXAlignment.Left,
+    })
+
+    -- Slide in
+    toast.Position = UDim2.new(1.2, 0, 0, 0)
+    Tween(toast, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        {Position = UDim2.new(0,0,0,0)})
+
+    table.insert(Toasts, toast)
+
+    -- Auto dismiss
+    task.delay(duration, function()
+        if toast and toast.Parent then
+            Tween(toast, FadeInfo, {
+                Position = UDim2.new(1.2,0,0,0),
+                BackgroundTransparency = 1
+            })
+            task.delay(0.3, function()
+                pcall(function() toast:Destroy() end)
+            end)
+        end
+    end)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 6 · ACCESS BADGE HELPER
+-- ════════════════════════════════════════════════════════════════
+
+local BADGE_COLORS = {
+    Free     = C.BadgeFree,
+    Keyless  = C.BadgeKeyless,
+    Premium  = C.BadgePremium,
+    Lifetime = C.BadgeLife,
+}
+
+local BADGE_LABELS = {
+    Free     = "◈  FREE",
+    Keyless  = "◈  KEYLESS",
+    Premium  = "◆  PREMIUM",
+    Lifetime = "★  LIFETIME",
+}
+
+local function MakeBadge(parent, accessType, size, textSize)
+    local badgeColor = BADGE_COLORS[accessType] or C.Accent
+    local badgeText  = BADGE_LABELS[accessType] or ("◈  " .. accessType:upper())
+
+    local badge = UI.Frame(parent, {
+        Name  = "Badge",
+        Color = badgeColor,
+        Size  = size or UDim2.new(0, 90, 0, 22),
+        Corner = 20,
+    })
+    badge.BackgroundTransparency = 0.75
+
+    local badgeStroke = Stroke(badge, badgeColor, 1, 0.3)
+
+    UI.Label(badge, {
+        Name      = "Label",
+        Text      = badgeText,
+        TextColor = badgeColor,
+        TextSize  = textSize or 10,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(1,0,1,0),
+        AlignX    = Enum.TextXAlignment.Center,
+    })
+
+    return badge
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 7 · MAIN UI BUILDER
+-- ════════════════════════════════════════════════════════════════
+
+-- State
+local _resolved  = false
+local _result    = { Passed=false, AccessType=CONFIG.AccessMode,
+                     DiscordID="", Username="" }
+local _savedData = {}
+local _statusLabel
+local _continueBtn
+
+local function SetStatus(text, color)
+    if _statusLabel then
+        _statusLabel.Text = text
+        _statusLabel.TextColor3 = color or C.TextMuted
+    end
+end
+
+-- Build the entire screen
+local function BuildUI()
+    -- ── ScreenGui ───────────────────────────────────────────────
+    local Screen = Instance.new("ScreenGui")
+    Screen.Name = "HyperionKeySystem"
+    Screen.ResetOnSpawn = false
+    Screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    Screen.DisplayOrder = 9999
+    Screen.IgnoreGuiInset = true
+    Screen.Parent = PlayerGui
+
+    -- ── Backdrop (dim + blur feel) ──────────────────────────────
+    local Backdrop = UI.Frame(Screen, {
+        Name  = "Backdrop",
+        Color = Color3.fromRGB(0,0,0),
+        Size  = UDim2.new(1,0,1,0),
+        Corner = false,
+    })
+    Backdrop.BackgroundTransparency = 0.5
+
+    -- ── Window container ────────────────────────────────────────
+    local Window = UI.Frame(Screen, {
+        Name  = "Window",
+        Color = C.Background,
+        Size  = CONFIG.WindowSize,
+        Position = UDim2.new(0.5,0,0.5,0),
+        Anchor = Vector2.new(0.5,0.5),
+        Corner = CONFIG.CornerRadius,
+    })
+    Stroke(Window, C.PanelBorder, 1)
+
+    -- Subtle window gradient overlay
+    Gradient(Window,
+        ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(28,18,60)),
+            ColorSequenceKeypoint.new(0.5, C.Background),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(5,3,14)),
+        }), 145)
+
+    -- Entrance animation
+    Window.BackgroundTransparency = 1
+    Window.Position = UDim2.new(0.5,0,0.6,0)
+    task.defer(function()
+        Tween(Window, TweenInfo.new(0.55,Enum.EasingStyle.Back,Enum.EasingDirection.Out), {
+            BackgroundTransparency = 0,
+            Position = UDim2.new(0.5,0,0.5,0),
+        })
+        Tween(Backdrop, FadeInfo, {BackgroundTransparency = 0.45})
+    end)
+
+    -- ── Glow ring behind window ─────────────────────────────────
+    local Glow = UI.Image(Screen, {
+        Name  = "Glow",
+        Image = "rbxassetid://5028857084",
+        Color = C.Accent,
+        Transparency = 0.82,
+        Size = UDim2.new(0, 600, 0, 700),
+        Position = UDim2.new(0.5,0,0.5,0),
+        Anchor = Vector2.new(0.5,0.5),
+    })
+
+    -- Main scroll padding
+    Padding(Window, nil, CONFIG.Padding, CONFIG.Padding,
+            CONFIG.Padding, CONFIG.Padding)
+
+    -- ── HEADER AREA ─────────────────────────────────────────────
+    local Header = UI.Frame(Window, {
+        Name  = "Header",
+        Color = Color3.new(0,0,0),
+        Transparency = 1,
+        Size = UDim2.new(1,0,0,110),
+        Position = UDim2.new(0,0,0,0),
+        Corner = false,
+    })
+
+    -- Logo
+    local LogoWrap = UI.Frame(Header, {
+        Name  = "LogoWrap",
+        Color = C.Accent,
+        Size  = UDim2.new(0,64,0,64),
+        Position = UDim2.new(0.5,0,0,0),
+        Anchor = Vector2.new(0.5,0),
+        Corner = 18,
+    })
+    LogoWrap.BackgroundTransparency = 0.8
+    Stroke(LogoWrap, C.Accent, 1, 0.5)
+
+    UI.Image(LogoWrap, {
+        Name  = "LogoImg",
+        Image = CONFIG.LogoAssetID,
+        Size  = UDim2.new(0,40,0,40),
+        Position = UDim2.new(0.5,0,0.5,0),
+        Anchor = Vector2.new(0.5,0.5),
+    })
+
+    -- Title
+    UI.Label(Header, {
+        Name     = "Title",
+        Text     = CONFIG.Title,
+        TextColor = C.Text,
+        TextSize  = 22,
+        Font     = Enum.Font.GothamBlack,
+        Size     = UDim2.new(1,0,0,26),
+        Position = UDim2.new(0,0,0,70),
+        AlignX   = Enum.TextXAlignment.Center,
+    })
+
+    -- Subtitle
+    UI.Label(Header, {
+        Name      = "Subtitle",
+        Text      = CONFIG.Subtitle,
+        TextColor = C.TextMuted,
+        TextSize  = 11,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(1,0,0,16),
+        Position  = UDim2.new(0,0,0,94),
+        AlignX    = Enum.TextXAlignment.Center,
+    })
+
+    -- ── DIVIDER ─────────────────────────────────────────────────
+    local Div1 = UI.Frame(Window, {
+        Name  = "Div1",
+        Color = C.PanelBorder,
+        Size  = UDim2.new(1,0,0,1),
+        Position = UDim2.new(0,0,0,118),
+        Corner = false,
+    })
+    Div1.BackgroundTransparency = 0.6
+
+    -- ── ACCESS INFO PANEL ───────────────────────────────────────
+    local AccessPanel = UI.Frame(Window, {
+        Name  = "AccessPanel",
+        Color = C.Panel,
+        Size  = UDim2.new(1,0,0,66),
+        Position = UDim2.new(0,0,0,128),
+        Corner = 10,
+    })
+    Stroke(AccessPanel, C.PanelBorder, 1)
+    Padding(AccessPanel, nil, 0, 0, 14, 14)
+
+    -- Left col: access type info
+    UI.Label(AccessPanel, {
+        Name      = "AccessTypeLabel",
+        Text      = "Access Type",
+        TextColor = C.TextFaint,
+        TextSize  = 10,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.5,0,0,16),
+        Position  = UDim2.new(0,0,0,10),
+    })
+    local AccessTypeValue = UI.Label(AccessPanel, {
+        Name      = "AccessTypeValue",
+        Text      = "Access Type: " .. CONFIG.AccessMode,
+        TextColor = C.Text,
+        TextSize  = 13,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.5,0,0,18),
+        Position  = UDim2.new(0,0,0,28),
+    })
+
+    -- Right col: subscription
+    UI.Label(AccessPanel, {
+        Name      = "SubLabel",
+        Text      = "Subscription",
+        TextColor = C.TextFaint,
+        TextSize  = 10,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.4,0,0,16),
+        Position  = UDim2.new(0.55,0,0,10),
+    })
+    local SubValue = UI.Label(AccessPanel, {
+        Name      = "SubValue",
+        Text      = "Subscription: " .. CONFIG.AccessMode,
+        TextColor = C.Text,
+        TextSize  = 13,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.4,0,0,18),
+        Position  = UDim2.new(0.55,0,0,28),
+    })
+
+    -- Badge in top-right of panel
+    local BadgeFrame = MakeBadge(AccessPanel, CONFIG.AccessMode,
+        UDim2.new(0,80,0,20))
+    BadgeFrame.Position = UDim2.new(1,-80,0,8)
+    BadgeFrame.AnchorPoint = Vector2.new(0,0)
+
+    -- ── AUTH PANEL ──────────────────────────────────────────────
+    local AuthPanel = UI.Frame(Window, {
+        Name  = "AuthPanel",
+        Color = C.Panel,
+        Size  = UDim2.new(1,0,0,CONFIG.AccessMode == "Free" and 120 or 60),
+        Position = UDim2.new(0,0,0,204),
+        Corner = 10,
+    })
+    Stroke(AuthPanel, C.PanelBorder, 1)
+    Padding(AuthPanel, nil, 14, 14, 14, 14)
+
+    local _keyBox, _keyStatusLabel
+
+    if CONFIG.AccessMode == "Free" then
+        -- Key input label
+        UI.Label(AuthPanel, {
+            Name      = "KeyLabel",
+            Text      = "Enter your key",
+            TextColor = C.TextMuted,
+            TextSize  = 11,
+            Font      = Enum.Font.GothamBold,
+            Size      = UDim2.new(1,0,0,16),
+            Position  = UDim2.new(0,0,0,0),
+        })
+
+        -- Key input box
+        _keyBox = UI.TextBox(AuthPanel, {
+            Name        = "KeyBox",
+            Placeholder = "HYPERION-XXXX-XXXX-XXXX",
+            Color       = C.Surface,
+            Size        = UDim2.new(1,0,0,38),
+            Position    = UDim2.new(0,0,0,20),
+            Font        = Enum.Font.Code,
+            TextSize    = 12,
+        })
+
+        -- Key status under box
+        _keyStatusLabel = UI.Label(AuthPanel, {
+            Name      = "KeyStatus",
+            Text      = "",
+            TextColor = C.TextFaint,
+            TextSize  = 10,
+            Font      = Enum.Font.Gotham,
+            Size      = UDim2.new(1,0,0,14),
+            Position  = UDim2.new(0,0,0,62),
+        })
+    else
+        -- Keyless / Premium / Lifetime message
+        local accessMsg = {
+            Keyless  = "No key required — access is open.",
+            Premium  = "Premium access authenticated.",
+            Lifetime = "Lifetime access authenticated.",
+        }
+        UI.Label(AuthPanel, {
+            Name      = "NoKeyMsg",
+            Text      = accessMsg[CONFIG.AccessMode] or "Access granted.",
+            TextColor = C.TextMuted,
+            TextSize  = 12,
+            Font      = Enum.Font.Gotham,
+            Size      = UDim2.new(1,0,1,0),
+            AlignX    = Enum.TextXAlignment.Center,
+            AlignY    = Enum.TextYAlignment.Center,
+        })
+    end
+
+    -- ── USER INFO PANEL ─────────────────────────────────────────
+    local UserPanel = UI.Frame(Window, {
+        Name  = "UserPanel",
+        Color = C.Panel,
+        Size  = UDim2.new(1,0,0,110),
+        Position = UDim2.new(0,0,0, CONFIG.AccessMode == "Free" and 336 or 276),
+        Corner = 10,
+    })
+    Stroke(UserPanel, C.PanelBorder, 1)
+    Padding(UserPanel, nil, 14, 14, 14, 14)
+
+    -- Section header
+    UI.Label(UserPanel, {
+        Name      = "UserInfoHeader",
+        Text      = "USER INFORMATION",
+        TextColor = C.TextFaint,
+        TextSize  = 9,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(1,0,0,14),
+        Position  = UDim2.new(0,0,0,0),
+    })
+
+    -- Discord ID row
+    UI.Label(UserPanel, {
+        Name      = "DiscordLabel",
+        Text      = "Discord ID",
+        TextColor = C.TextMuted,
+        TextSize  = 11,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.4,0,0,14),
+        Position  = UDim2.new(0,0,0,18),
+    })
+    local DiscordValueLabel = UI.Label(UserPanel, {
+        Name      = "DiscordValue",
+        Text      = "—",
+        TextColor = C.Text,
+        TextSize  = 11,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(0.6,0,0,14),
+        Position  = UDim2.new(0.38,0,0,18),
+    })
+
+    -- Username row
+    UI.Label(UserPanel, {
+        Name      = "UsernameLabel",
+        Text      = "Username",
+        TextColor = C.TextMuted,
+        TextSize  = 11,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.4,0,0,14),
+        Position  = UDim2.new(0,0,0,36),
+    })
+    local UsernameValueLabel = UI.Label(UserPanel, {
+        Name      = "UsernameValue",
+        Text      = LP.DisplayName .. " (@" .. LP.Name .. ")",
+        TextColor = C.Text,
+        TextSize  = 11,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(0.6,0,0,14),
+        Position  = UDim2.new(0.38,0,0,36),
+    })
+
+    -- Last login row
+    UI.Label(UserPanel, {
+        Name      = "LastLoginLabel",
+        Text      = "Last Login",
+        TextColor = C.TextMuted,
+        TextSize  = 11,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(0.4,0,0,14),
+        Position  = UDim2.new(0,0,0,54),
+    })
+    local LastLoginValue = UI.Label(UserPanel, {
+        Name      = "LastLoginValue",
+        Text      = "—",
+        TextColor = C.Text,
+        TextSize  = 11,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(0.6,0,0,14),
+        Position  = UDim2.new(0.38,0,0,54),
+    })
+
+    -- "User Data Loaded" chip
+    local DataLoadedChip = UI.Frame(UserPanel, {
+        Name  = "DataLoadedChip",
+        Color = C.Success,
+        Size  = UDim2.new(0,120,0,18),
+        Position = UDim2.new(0,0,0,80),
+        Corner = 20,
+    })
+    DataLoadedChip.BackgroundTransparency = 0.8
+    DataLoadedChip.Visible = false
+    UI.Label(DataLoadedChip, {
+        Name      = "ChipLabel",
+        Text      = "✓  User Data Loaded",
+        TextColor = C.Success,
+        TextSize  = 9,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(1,0,1,0),
+        AlignX    = Enum.TextXAlignment.Center,
+    })
+
+    -- ── DISCORD INPUT AREA (first-time setup) ───────────────────
+    local baseY = CONFIG.AccessMode == "Free" and 456 or 396
+
+    local DiscordSetupPanel = UI.Frame(Window, {
+        Name  = "DiscordSetup",
+        Color = C.Panel,
+        Size  = UDim2.new(1,0,0,90),
+        Position = UDim2.new(0,0,0, baseY),
+        Corner = 10,
+    })
+    Stroke(DiscordSetupPanel, C.PanelBorder, 1)
+    Padding(DiscordSetupPanel, nil, 12, 12, 14, 14)
+    DiscordSetupPanel.Visible = false  -- shown only when needed
+
+    UI.Label(DiscordSetupPanel, {
+        Name      = "DsLabel",
+        Text      = "DISCORD ID  (17–19 digits)",
+        TextColor = C.TextFaint,
+        TextSize  = 9,
+        Font      = Enum.Font.GothamBold,
+        Size      = UDim2.new(1,0,0,12),
+        Position  = UDim2.new(0,0,0,0),
+    })
+
+    local DiscordBox = UI.TextBox(DiscordSetupPanel, {
+        Name        = "DiscordBox",
+        Placeholder = "e.g. 123456789012345678",
+        Color       = C.Surface,
+        Size        = UDim2.new(1,0,0,36),
+        Position    = UDim2.new(0,0,0,16),
+        TextSize    = 12,
+    })
+
+    local DiscordErrorLabel = UI.Label(DiscordSetupPanel, {
+        Name      = "DiscordError",
+        Text      = "",
+        TextColor = C.Error,
+        TextSize  = 10,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(1,0,0,12),
+        Position  = UDim2.new(0,0,0,56),
+    })
+
+    -- ── STATUS TEXT ─────────────────────────────────────────────
+    local statusY = baseY + (CONFIG.RequireDiscord and 100 or 0)
+    _statusLabel = UI.Label(Window, {
+        Name      = "StatusLabel",
+        Text      = "Initialising…",
+        TextColor = C.TextMuted,
+        TextSize  = 11,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(1,0,0,16),
+        Position  = UDim2.new(0,0,0, statusY),
+        AlignX    = Enum.TextXAlignment.Center,
+    })
+
+    -- ── BUTTON ROW ──────────────────────────────────────────────
+    local btnY = statusY + 24
+
+    -- Continue / Confirm button
+    _continueBtn = UI.Button(Window, {
+        Name     = "ContinueBtn",
+        Text     = CONFIG.AccessMode == "Keyless" and "CONTINUE  →" or "VALIDATE KEY  →",
+        Color    = C.Accent,
+        HoverColor = C.AccentGlow,
+        PressColor = C.AccentSoft,
+        Size     = UDim2.new(1,0,0,42),
+        Position = UDim2.new(0,0,0, btnY),
+        TextSize = 13,
+        Font     = Enum.Font.GothamBold,
+    })
+    -- Shimmer gradient on button
+    Gradient(_continueBtn,
+        ColorSequence.new({
+            ColorSequenceKeypoint.new(0, C.AccentGlow),
+            ColorSequenceKeypoint.new(1, C.AccentSoft),
+        }), 135)
+
+    -- Secondary buttons row
+    local secBtnY = btnY + 52
+    local secBtnW = (CONFIG.ShowGetKeyButton and CONFIG.AccessMode == "Free")
+                    and UDim2.new(0.32,-4,0,34)
+                    or  UDim2.new(0.49,-4,0,34)
+
+    local SaveBtn = UI.Button(Window, {
+        Name     = "SaveBtn",
+        Text     = "Save Data",
+        Color    = C.Surface,
+        HoverColor = C.Panel,
+        PressColor = C.Background,
+        Size     = secBtnW,
+        Position = UDim2.new(0,0,0, secBtnY),
+        TextColor = C.TextMuted,
+        TextSize = 11,
+        Font     = Enum.Font.GothamBold,
+    })
+    Stroke(SaveBtn, C.PanelBorder, 1)
+
+    local ResetBtn = UI.Button(Window, {
+        Name     = "ResetBtn",
+        Text     = "Reset Data",
+        Color    = C.Surface,
+        HoverColor = Color3.fromRGB(60,20,25),
+        PressColor = Color3.fromRGB(40,10,15),
+        Size     = secBtnW,
+        Position = CONFIG.ShowGetKeyButton and CONFIG.AccessMode == "Free"
+                   and UDim2.new(0.34,4,0,secBtnY)
+                   or  UDim2.new(0.51,4,0,secBtnY),
+        TextColor = C.TextMuted,
+        TextSize  = 11,
+        Font      = Enum.Font.GothamBold,
+    })
+    Stroke(ResetBtn, Color3.fromRGB(80,30,35), 1)
+
+    local GetKeyBtn
+    if CONFIG.ShowGetKeyButton and CONFIG.AccessMode == "Free" then
+        GetKeyBtn = UI.Button(Window, {
+            Name     = "GetKeyBtn",
+            Text     = "Get Key  ↗",
+            Color    = C.Surface,
+            HoverColor = Color3.fromRGB(30,20,55),
+            PressColor = Color3.fromRGB(20,12,38),
+            Size     = UDim2.new(0.32,-4,0,34),
+            Position = UDim2.new(0.68,4,0,secBtnY),
+            TextColor = C.Accent,
+            TextSize  = 11,
+            Font      = Enum.Font.GothamBold,
+        })
+        Stroke(GetKeyBtn, C.AccentSoft, 1)
+    end
+
+    -- ── FOOTER ──────────────────────────────────────────────────
+    local footerY = secBtnY + 46
+
+    UI.Frame(Window, {
+        Name  = "FooterDiv",
+        Color = C.PanelBorder,
+        Size  = UDim2.new(1,0,0,1),
+        Position = UDim2.new(0,0,0, footerY),
+        Corner = false,
+    }).BackgroundTransparency = 0.7
+
+    UI.Label(Window, {
+        Name      = "VersionLabel",
+        Text      = CONFIG.Version,
+        TextColor = C.TextFaint,
+        TextSize  = 9,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(0.5,0,0,14),
+        Position  = UDim2.new(0,0,0, footerY + 6),
+    })
+    UI.Label(Window, {
+        Name      = "CopyrightLabel",
+        Text      = "by Phobia",
+        TextColor = C.TextFaint,
+        TextSize  = 9,
+        Font      = Enum.Font.Gotham,
+        Size      = UDim2.new(0.5,0,0,14),
+        Position  = UDim2.new(0.5,0,0, footerY + 6),
+        AlignX    = Enum.TextXAlignment.Right,
+    })
+
+    -- ── TOAST HOLDER ────────────────────────────────────────────
+    _toastHolder = UI.Frame(Window, {
+        Name         = "ToastHolder",
+        Color        = Color3.new(0,0,0),
+        Transparency = 1,
+        Size         = UDim2.new(1,0,0,150),
+        Position     = UDim2.new(0,0,1,-160),
+        Corner       = false,
+        Clip         = false,
+    })
+    local toastLayout = Instance.new("UIListLayout")
+    toastLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    toastLayout.FillDirection = Enum.FillDirection.Vertical
+    toastLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    toastLayout.Padding = UDim.new(0,4)
+    toastLayout.Parent = _toastHolder
+
+    -- ════════════════════════════════════════════════════════════
+    -- SECTION 8 · LOGIC & CALLBACKS
+    -- ════════════════════════════════════════════════════════════
+
+    -- Helper: validate Discord ID format
+    local function ValidateDiscordID(id)
+        if type(id) ~= "string" then return false end
+        id = id:match("^%s*(.-)%s*$") -- trim
+        return id:match(CONFIG.DiscordIDPattern) ~= nil
+    end
+
+    -- Helper: format a timestamp to readable date
+    local function FormatTimestamp(ts)
+        ts = tonumber(ts)
+        if not ts then return "Unknown" end
+        -- Simple relative display (can't do full date without os.date in Luau)
+        local diff = os.time() - ts
+        if diff < 60    then return "Just now" end
+        if diff < 3600  then return math.floor(diff/60)  .. "m ago" end
+        if diff < 86400 then return math.floor(diff/3600) .. "h ago" end
+        return math.floor(diff/86400) .. "d ago"
+    end
+
+    -- Populate UI with saved/current user data
+    local function PopulateUserInfo(data)
+        local discordID = data.discordID or ""
+        DiscordValueLabel.Text = (discordID ~= "") and discordID or "—"
+        UsernameValueLabel.Text = LP.DisplayName .. " (@" .. LP.Name .. ")"
+
+        if data.lastLogin then
+            LastLoginValue.Text = FormatTimestamp(data.lastLogin)
+        end
+        if data.accessType then
+            AccessTypeValue.Text = "Access Type: " .. data.accessType
+            SubValue.Text = "Subscription: " .. data.accessType
+        end
+        if data.discordID and data.discordID ~= "" then
+            DataLoadedChip.Visible = true
+        end
+        _result.DiscordID = discordID
+        _result.Username  = LP.Name
+    end
+
+    -- Collect and save all current user data
+    local function CollectAndSave()
+        local dataToSave = {
+            discordID   = _result.DiscordID,
+            username    = LP.Name,
+            displayName = LP.DisplayName,
+            accessType  = _result.AccessType,
+            lastLogin   = tostring(os.time()),
+        }
+        if _keyBox then
+            dataToSave.lastKey = _keyBox.Text
+        end
+        local ok = Storage.Save(dataToSave)
+        if ok then
+            ShowToast("Data saved successfully.", "Success", 3)
+            SetStatus("User Data Loaded", C.Success)
+            DataLoadedChip.Visible = true
+        else
+            ShowToast("Could not save — executor may not support file IO.", "Warning", 4)
+        end
+    end
+
+    -- Resolve with success
+    local function Resolve(accessType)
+        if _resolved then return end
+        _resolved = true
+        _result.Passed     = true
+        _result.AccessType = accessType or CONFIG.AccessMode
+        CollectAndSave()
+        -- Animate out
+        task.delay(1.2, function()
+            Tween(Window, FadeInfo, {
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0.5,0,0.42,0),
+            })
+            Tween(Backdrop, FadeInfo, {BackgroundTransparency = 1})
+            Tween(Glow, FadeInfo, {ImageTransparency = 1})
+            task.delay(0.35, function()
+                pcall(function() Screen:Destroy() end)
+            end)
+        end)
+    end
+
+    -- ── Load saved data ─────────────────────────────────────────
+    _savedData = Storage.Load()
+    local hasSavedDiscord = (_savedData.discordID and _savedData.discordID ~= "")
+    PopulateUserInfo(_savedData)
+
+    -- Show / hide Discord setup panel
+    if CONFIG.RequireDiscord and not hasSavedDiscord then
+        DiscordSetupPanel.Visible = true
+        if _savedData.discordID then
+            DiscordBox.Text = _savedData.discordID
+        end
+        SetStatus("Please enter your Discord ID to continue.", C.Warning)
+    else
+        SetStatus("Ready — press Continue.", C.TextMuted)
+    end
+
+    -- Pre-fill key box from saved data
+    if _keyBox and _savedData.lastKey and _savedData.lastKey ~= "" then
+        _keyBox.Text = _savedData.lastKey
+    end
+
+    -- ── CONTINUE BUTTON ─────────────────────────────────────────
+    _continueBtn.MouseButton1Click:Connect(function()
+        -- 1. Validate Discord ID if required and not yet saved
+        if CONFIG.RequireDiscord and not hasSavedDiscord then
+            local rawID = DiscordBox.Text:match("^%s*(.-)%s*$")
+            if not ValidateDiscordID(rawID) then
+                DiscordErrorLabel.Text = "⚠  Invalid Discord ID — must be 17–19 digits."
+                Tween(DiscordBox, QuickInfo, {BackgroundColor3 = Color3.fromRGB(60,20,25)})
+                task.delay(0.4, function()
+                    Tween(DiscordBox, QuickInfo, {BackgroundColor3 = C.Surface})
+                end)
+                ShowToast("Please enter a valid Discord ID.", "Error", 3)
+                return
+            end
+            DiscordErrorLabel.Text = ""
+            _result.DiscordID = rawID
+            _savedData.discordID = rawID
+            DiscordValueLabel.Text = rawID
+            DataLoadedChip.Visible = true
+        end
+
+        -- 2. Validate key if in Free mode
+        if CONFIG.AccessMode == "Free" then
+            local key = _keyBox and _keyBox.Text:match("^%s*(.-)%s*$") or ""
+            if #CONFIG.ValidKeys > 0 then
+                local valid = false
+                for _, vk in ipairs(CONFIG.ValidKeys) do
+                    if vk == key then valid = true break end
+                end
+                if not valid then
+                    if _keyStatusLabel then
+                        _keyStatusLabel.Text = "✗  Invalid key."
+                        _keyStatusLabel.TextColor3 = C.Error
+                    end
+                    Tween(_keyBox, QuickInfo, {BackgroundColor3 = Color3.fromRGB(60,20,25)})
+                    task.delay(0.4, function()
+                        Tween(_keyBox, QuickInfo, {BackgroundColor3 = C.Surface})
+                    end)
+                    ShowToast("Key invalid. Please try again.", "Error", 3)
+                    return
+                end
+            end
+            if _keyStatusLabel then
+                _keyStatusLabel.Text = "✓  Key accepted."
+                _keyStatusLabel.TextColor3 = C.Success
+            end
+            ShowToast("Key validated!", "Success", 2)
+            SetStatus("Access Granted — Welcome!", C.Success)
+            _result.Key = key
+        else
+            ShowToast("Access granted — welcome, " .. LP.DisplayName .. "!", "Success", 2)
+            SetStatus("Access Granted — Welcome!", C.Success)
+        end
+
+        Resolve(CONFIG.AccessMode)
+    end)
+
+    -- ── SAVE BUTTON ──────────────────────────────────────────────
+    SaveBtn.MouseButton1Click:Connect(function()
+        CollectAndSave()
+    end)
+
+    -- ── RESET BUTTON ─────────────────────────────────────────────
+    ResetBtn.MouseButton1Click:Connect(function()
+        Storage.Clear()
+        _savedData = {}
+        _result.DiscordID = ""
+        DiscordValueLabel.Text = "—"
+        LastLoginValue.Text = "—"
+        DataLoadedChip.Visible = false
+        if _keyBox then _keyBox.Text = "" end
+        if DiscordBox then DiscordBox.Text = "" end
+        ShowToast("Saved data cleared.", "Warning", 3)
+        SetStatus("Data reset. Re-enter your info.", C.Warning)
+    end)
+
+    -- ── GET KEY BUTTON ───────────────────────────────────────────
+    if GetKeyBtn then
+        GetKeyBtn.MouseButton1Click:Connect(function()
+            ShowToast("Opening key link — check executor browser.", "Info", 4)
+            -- In executor context, use setclipboard to copy URL
+            pcall(function()
+                if setclipboard then
+                    setclipboard(CONFIG.GetKeyURL)
+                    ShowToast("Link copied to clipboard!", "Success", 2)
+                end
+            end)
+        end)
+    end
+
+    -- ── Pulse animation on the logo glow ─────────────────────────
+    task.spawn(function()
+        local pulseInfo = TweenInfo.new(2.5, Enum.EasingStyle.Sine,
+                          Enum.EasingDirection.InOut, -1, true)
+        Tween(Glow, pulseInfo, {ImageTransparency = 0.92})
+    end)
+
+    -- Return the Screen so caller can clean up if needed
+    return Screen
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- SECTION 9 · PUBLIC API
+-- ════════════════════════════════════════════════════════════════
+
+--[[
+    KeySystem:Init([callback])
+
+    Builds the UI and waits for the user to authenticate.
+    Returns a result table:
+        {
+            Passed     : bool,
+            AccessType : string,  -- "Free" | "Keyless" | "Premium" | "Lifetime"
+            DiscordID  : string,
+            Username   : string,
+            Key        : string,  -- only set in Free mode
+        }
+
+    Optionally pass a callback(result) instead of yielding.
+--]]
+function KeySystem:Init(callback)
+    _resolved = false
+    _result   = {
+        Passed     = false,
+        AccessType = CONFIG.AccessMode,
+        DiscordID  = "",
+        Username   = LP.Name,
+        Key        = "",
+    }
+
+    BuildUI()
+
+    if callback then
+        -- Non-blocking: poll for resolution
+        task.spawn(function()
+            while not _resolved do task.wait(0.1) end
+            callback(_result)
+        end)
+        return
+    end
+
+    -- Blocking yield
+    while not _resolved do task.wait(0.1) end
+    return _result
+end
+
+-- Expose CONFIG so callers can override before calling Init
+KeySystem.Config = CONFIG
+
+return KeySystem
