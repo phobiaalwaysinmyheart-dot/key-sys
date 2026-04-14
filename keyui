@@ -26,7 +26,7 @@ local CONFIG = {
     Title        = "HYPERION",
     Subtitle     = "Authentication Required",
     Version      = "v1.4  ·  Build 0142",
-    LogoAssetID  = "rbxassetid://6031280882",   -- replace with your logo
+    LogoAssetID  = "rbxassetid://18342740010",  -- Hyperion shield logo
 
     -- ── Access Mode ────────────────────────────────────────────
     -- "Keyless"  → no key needed, skip straight through
@@ -78,7 +78,7 @@ local CONFIG = {
     },
 
     -- ── Sizing ─────────────────────────────────────────────────
-    WindowSize   = UDim2.new(0, 480, 0, 620),
+    WindowSize   = UDim2.new(0, 480, 0, 540),
     CornerRadius = 14,
     Padding      = 20,
 }
@@ -584,13 +584,60 @@ local function BuildUI()
         Tween(Backdrop, FadeInfo, {BackgroundTransparency = 0.45})
     end)
 
-    -- ── Glow ring behind window ─────────────────────────────────
+    -- ── Animated floating orb background ────────────────────────
+    local OrbLayer = Instance.new("Frame")
+    OrbLayer.Name = "OrbLayer"
+    OrbLayer.BackgroundTransparency = 1
+    OrbLayer.Size = UDim2.new(1,0,1,0)
+    OrbLayer.BorderSizePixel = 0
+    OrbLayer.ZIndex = 1
+    OrbLayer.Parent = Screen
+
+    local _rng = Random.new()
+    local _orbRunning = true
+
+    local function SpawnOrb()
+        if not Screen or not Screen.Parent then return end
+        local orb = Instance.new("ImageLabel")
+        orb.BackgroundTransparency = 1
+        orb.Image = "rbxassetid://5028857084"
+        local sz = _rng:NextInteger(28, 85)
+        orb.Size = UDim2.new(0, sz, 0, sz)
+        local xp = _rng:NextNumber(0.03, 0.97)
+        orb.Position = UDim2.new(xp, 0, 1.06, 0)
+        orb.AnchorPoint = Vector2.new(0.5, 0.5)
+        orb.ImageTransparency = _rng:NextNumber(0.6, 0.82)
+        orb.ImageColor3 = Color3.fromHSV(_rng:NextNumber(0.72, 0.82), 0.9, 1)
+        orb.BorderSizePixel = 0
+        orb.ZIndex = 1
+        orb.Parent = OrbLayer
+        local dur = _rng:NextNumber(7, 15)
+        TweenService:Create(orb, TweenInfo.new(dur, Enum.EasingStyle.Linear), {
+            Position = UDim2.new(xp + _rng:NextNumber(-0.07, 0.07), 0, -0.1, 0),
+            ImageTransparency = 1,
+        }):Play()
+        game:GetService("Debris"):AddItem(orb, dur + 0.3)
+    end
+
+    -- Initial staggered burst
+    for i = 1, 16 do
+        task.delay(_rng:NextNumber(0, 2.5), SpawnOrb)
+    end
+    -- Continuous emitter
+    task.spawn(function()
+        while _orbRunning and Screen and Screen.Parent do
+            task.wait(_rng:NextNumber(0.5, 1.2))
+            SpawnOrb()
+        end
+    end)
+
+    -- Static glow behind window (kept for depth)
     local Glow = UI.Image(Screen, {
         Name  = "Glow",
         Image = "rbxassetid://5028857084",
         Color = C.Accent,
-        Transparency = 0.82,
-        Size = UDim2.new(0, 600, 0, 700),
+        Transparency = 0.84,
+        Size = UDim2.new(0, 580, 0, 640),
         Position = UDim2.new(0.5,0,0.5,0),
         Anchor = Vector2.new(0.5,0.5),
     })
@@ -598,6 +645,38 @@ local function BuildUI()
     -- Main scroll padding
     Padding(Window, nil, CONFIG.Padding, CONFIG.Padding,
             CONFIG.Padding, CONFIG.Padding)
+
+    -- ── Close button (top-right corner) ─────────────────────────
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Name = "CloseBtn"
+    CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+    CloseBtn.Position = UDim2.new(1, -10, 0, -10)
+    CloseBtn.AnchorPoint = Vector2.new(1, 0)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(35, 22, 62)
+    CloseBtn.Text = "✕"
+    CloseBtn.TextColor3 = C.TextFaint
+    CloseBtn.TextSize = 11
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.AutoButtonColor = false
+    CloseBtn.BorderSizePixel = 0
+    CloseBtn.ZIndex = 10
+    CloseBtn.Parent = Window
+    Corner(CloseBtn, 7)
+    Stroke(CloseBtn, C.PanelBorder, 1)
+    CloseBtn.MouseEnter:Connect(function()
+        Tween(CloseBtn, QuickInfo, {BackgroundColor3 = Color3.fromRGB(80,22,30), TextColor3 = C.Error})
+    end)
+    CloseBtn.MouseLeave:Connect(function()
+        Tween(CloseBtn, QuickInfo, {BackgroundColor3 = Color3.fromRGB(35,22,62), TextColor3 = C.TextFaint})
+    end)
+    CloseBtn.MouseButton1Click:Connect(function()
+        _orbRunning = false
+        _resolved = true  -- unblock any waiting :Init() call
+        Tween(Window, FadeInfo, {BackgroundTransparency = 1, Position = UDim2.new(0.5,0,0.44,0)})
+        Tween(Backdrop, FadeInfo, {BackgroundTransparency = 1})
+        Tween(Glow, FadeInfo, {ImageTransparency = 1})
+        task.delay(0.3, function() pcall(function() Screen:Destroy() end) end)
+    end)
 
     -- ── HEADER AREA ─────────────────────────────────────────────
     local Header = UI.Frame(Window, {
@@ -681,37 +760,17 @@ local function BuildUI()
         TextColor = C.TextFaint,
         TextSize  = 10,
         Font      = Enum.Font.GothamBold,
-        Size      = UDim2.new(0.5,0,0,16),
+        Size      = UDim2.new(0.55,0,0,16),
         Position  = UDim2.new(0,0,0,10),
     })
     local AccessTypeValue = UI.Label(AccessPanel, {
         Name      = "AccessTypeValue",
-        Text      = "Access Type: " .. CONFIG.AccessMode,
+        Text      = CONFIG.AccessMode,
         TextColor = C.Text,
-        TextSize  = 13,
+        TextSize  = 14,
         Font      = Enum.Font.GothamBold,
-        Size      = UDim2.new(0.5,0,0,18),
+        Size      = UDim2.new(0.55,0,0,20),
         Position  = UDim2.new(0,0,0,28),
-    })
-
-    -- Right col: subscription
-    UI.Label(AccessPanel, {
-        Name      = "SubLabel",
-        Text      = "Subscription",
-        TextColor = C.TextFaint,
-        TextSize  = 10,
-        Font      = Enum.Font.GothamBold,
-        Size      = UDim2.new(0.4,0,0,16),
-        Position  = UDim2.new(0.55,0,0,10),
-    })
-    local SubValue = UI.Label(AccessPanel, {
-        Name      = "SubValue",
-        Text      = "Subscription: " .. CONFIG.AccessMode,
-        TextColor = C.Text,
-        TextSize  = 13,
-        Font      = Enum.Font.GothamBold,
-        Size      = UDim2.new(0.4,0,0,18),
-        Position  = UDim2.new(0.55,0,0,28),
     })
 
     -- Badge in top-right of panel
@@ -769,9 +828,9 @@ local function BuildUI()
     else
         -- Keyless / Premium / Lifetime message
         local accessMsg = {
-            Keyless  = "No key required — access is open.",
-            Premium  = "Premium access authenticated.",
-            Lifetime = "Lifetime access authenticated.",
+            Keyless  = "No key required.",
+            Premium  = "Premium access verified.",
+            Lifetime = "Lifetime access verified.",
         }
         UI.Label(AuthPanel, {
             Name      = "NoKeyMsg",
@@ -789,28 +848,17 @@ local function BuildUI()
     local UserPanel = UI.Frame(Window, {
         Name  = "UserPanel",
         Color = C.Panel,
-        Size  = UDim2.new(1,0,0,110),
+        Size  = UDim2.new(1,0,0,82),
         Position = UDim2.new(0,0,0, CONFIG.AccessMode == "Free" and 336 or 276),
         Corner = 10,
     })
     Stroke(UserPanel, C.PanelBorder, 1)
     Padding(UserPanel, nil, 14, 14, 14, 14)
 
-    -- Section header
-    UI.Label(UserPanel, {
-        Name      = "UserInfoHeader",
-        Text      = "USER INFORMATION",
-        TextColor = C.TextFaint,
-        TextSize  = 9,
-        Font      = Enum.Font.GothamBold,
-        Size      = UDim2.new(1,0,0,14),
-        Position  = UDim2.new(0,0,0,0),
-    })
-
     -- Discord ID row
     UI.Label(UserPanel, {
         Name      = "DiscordLabel",
-        Text      = "Discord ID",
+        Text      = "Discord",
         TextColor = C.TextMuted,
         TextSize  = 11,
         Font      = Enum.Font.GothamBold,
@@ -847,32 +895,12 @@ local function BuildUI()
         Position  = UDim2.new(0.38,0,0,36),
     })
 
-    -- Last login row
-    UI.Label(UserPanel, {
-        Name      = "LastLoginLabel",
-        Text      = "Last Login",
-        TextColor = C.TextMuted,
-        TextSize  = 11,
-        Font      = Enum.Font.GothamBold,
-        Size      = UDim2.new(0.4,0,0,14),
-        Position  = UDim2.new(0,0,0,54),
-    })
-    local LastLoginValue = UI.Label(UserPanel, {
-        Name      = "LastLoginValue",
-        Text      = "—",
-        TextColor = C.Text,
-        TextSize  = 11,
-        Font      = Enum.Font.Gotham,
-        Size      = UDim2.new(0.6,0,0,14),
-        Position  = UDim2.new(0.38,0,0,54),
-    })
-
     -- "User Data Loaded" chip
     local DataLoadedChip = UI.Frame(UserPanel, {
         Name  = "DataLoadedChip",
         Color = C.Success,
         Size  = UDim2.new(0,120,0,18),
-        Position = UDim2.new(0,0,0,80),
+        Position = UDim2.new(0,0,0,54),
         Corner = 20,
     })
     DataLoadedChip.BackgroundTransparency = 0.8
@@ -903,7 +931,7 @@ local function BuildUI()
 
     UI.Label(DiscordSetupPanel, {
         Name      = "DsLabel",
-        Text      = "DISCORD ID  (17–19 digits)",
+        Text      = "DISCORD ID",
         TextColor = C.TextFaint,
         TextSize  = 9,
         Font      = Enum.Font.GothamBold,
@@ -1095,12 +1123,8 @@ local function BuildUI()
         DiscordValueLabel.Text = (discordID ~= "") and discordID or "—"
         UsernameValueLabel.Text = LP.DisplayName .. " (@" .. LP.Name .. ")"
 
-        if data.lastLogin then
-            LastLoginValue.Text = FormatTimestamp(data.lastLogin)
-        end
         if data.accessType then
-            AccessTypeValue.Text = "Access Type: " .. data.accessType
-            SubValue.Text = "Subscription: " .. data.accessType
+            AccessTypeValue.Text = data.accessType
         end
         if data.discordID and data.discordID ~= "" then
             DataLoadedChip.Visible = true
@@ -1135,6 +1159,7 @@ local function BuildUI()
     local function Resolve(accessType)
         if _resolved then return end
         _resolved = true
+        _orbRunning = false
         _result.Passed     = true
         _result.AccessType = accessType or CONFIG.AccessMode
         CollectAndSave()
@@ -1165,7 +1190,7 @@ local function BuildUI()
         end
         SetStatus("Please enter your Discord ID to continue.", C.Warning)
     else
-        SetStatus("Ready — press Continue.", C.TextMuted)
+        SetStatus("Ready.", C.TextMuted)
     end
 
     -- Pre-fill key box from saved data
@@ -1220,11 +1245,11 @@ local function BuildUI()
                 _keyStatusLabel.TextColor3 = C.Success
             end
             ShowToast("Key validated!", "Success", 2)
-            SetStatus("Access Granted — Welcome!", C.Success)
+            SetStatus("Access Granted.", C.Success)
             _result.Key = key
         else
-            ShowToast("Access granted — welcome, " .. LP.DisplayName .. "!", "Success", 2)
-            SetStatus("Access Granted — Welcome!", C.Success)
+            ShowToast("Welcome, " .. LP.DisplayName .. "!", "Success", 2)
+            SetStatus("Access Granted.", C.Success)
         end
 
         Resolve(CONFIG.AccessMode)
@@ -1241,7 +1266,6 @@ local function BuildUI()
         _savedData = {}
         _result.DiscordID = ""
         DiscordValueLabel.Text = "—"
-        LastLoginValue.Text = "—"
         DataLoadedChip.Visible = false
         if _keyBox then _keyBox.Text = "" end
         if DiscordBox then DiscordBox.Text = "" end
