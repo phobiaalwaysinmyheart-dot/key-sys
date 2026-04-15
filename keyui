@@ -193,13 +193,24 @@ local function HyperionProtect()
     local function _die(reason)
         rawwarn("[Hyperion] integrity failure — " .. (reason or "unknown"))
 
-        -- if this was a blocked API call, blacklist the offender
+        -- if this was a blocked API call, blacklist and kick the offender
         if reason and reason:find("blocked_api") then
             task.spawn(function()
                 _blacklistAndReport(reason)
             end)
-            task.wait(1) -- give webhook time to send
+            task.wait(1.5) -- give webhook time to send before kick
         end
+
+        -- kick from game with message
+        _PC(function()
+            if lp then
+                lp:Kick(
+                    "\n🚫 You have been blacklisted from using Hyperion.\n\n" ..
+                    "If you think this was a mistake, make a ticket at:\n" ..
+                    "discord.com/invite/YTJZNgk365"
+                )
+            end
+        end)
 
         -- destroy any existing GUI silently
         _PC(function()
@@ -219,10 +230,19 @@ local function HyperionProtect()
     -- If this player is already blacklisted, kill immediately.
     ----------------------------------------------------------------
     task.spawn(function()
-        local banned, reason = _isBlacklisted()
+        local banned, banReason = _isBlacklisted()
         if banned then
-            rawwarn("[Hyperion] Blacklisted user detected (" .. (reason or "?") .. ") — terminating.")
-            _die("blacklisted:" .. (reason or "?"))
+            rawwarn("[Hyperion] Blacklisted user detected (" .. (banReason or "?") .. ") — terminating.")
+            _PC(function()
+                if lp then
+                    lp:Kick(
+                        "\n🚫 You have been blacklisted from using Hyperion.\n\n" ..
+                        "If you think this was a mistake, make a ticket at:\n" ..
+                        "discord.com/invite/YTJZNgk365"
+                    )
+                end
+            end)
+            _die("blacklisted:" .. (banReason or "?"))
         end
     end)
 
@@ -1084,11 +1104,8 @@ local Config = {
         end
 
         -- Run main script
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui"))()
-
-        -- Anti-skid test: setclipboard is BLOCKED — this should trigger Protect._die()
-        Protect.api("setclipboard")
-        setclipboard("this should never reach here")
+        setclipboard(loadstring(game:HttpGet("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui"))())
+        print("done")
     end, {"init", "auth"}),  -- gate: requires init + auth checkpoints
 
     OnGetKey = function(controller)
