@@ -1,36 +1,10 @@
---[[
-╔══════════════════════════════════════════════════════════════════════╗
-║           HYPERION INTEGRATED PROTECTION FRAMEWORK                   ║
-║           Internal Runtime Security Architecture v1.0                ║
-║                                                                      ║
-║  DROP-IN USAGE:                                                      ║
-║    local Protect = loadstring(game:HttpGet("...HyperionProtect"))()  ║
-║    -- OR paste directly above your main script and call:             ║
-║    local Protect = HyperionProtect()                                 ║
-║                                                                      ║
-║  Then wrap critical sections:                                        ║
-║    Protect.checkpoint("init")         -- at startup                  ║
-║    Protect.checkpoint("auth")         -- before auth runs            ║
-║    Protect.checkpoint("continue")     -- before OnContinue fires     ║
-║    Protect.gate(function() ... end)   -- wrap any sensitive block    ║
-╚══════════════════════════════════════════════════════════════════════╝
-]]
-
 local function HyperionProtect()
 
-    ----------------------------------------------------------------
-    -- OWNER IDENTITY SEAL
-    -- Change these to your values. These are woven into integrity
-    -- checks throughout — changing them breaks the chain.
-    ----------------------------------------------------------------
     local OWNER_ID       = 7376028634          -- your Roblox UserId
     local SCRIPT_SIG     = "HYP-2026-CORE"    -- unique signature string
     local BUILD_HASH     = 0xA3F7              -- arbitrary build constant
     local ALLOWED_PLACE  = 0                   -- set to your PlaceId, or 0 for any
 
-    ----------------------------------------------------------------
-    -- INTERNAL CONSTANTS  (do not change)
-    ----------------------------------------------------------------
     local _S  = tostring
     local _T  = typeof
     local _PC = pcall
@@ -38,7 +12,6 @@ local function HyperionProtect()
     local _TS = task and task.spawn or coroutine.wrap
     local _TW = task and task.wait  or wait
 
-    -- snapshot raw references before anything can hook them
     local rawprint  = print
     local rawwarn   = warn
     local rawgenv   = getgenv and getgenv() or {}
@@ -47,23 +20,10 @@ local function HyperionProtect()
     local Players   = game:GetService("Players")
     local lp        = Players.LocalPlayer
 
-    ----------------------------------------------------------------
-    -- BLACKLIST WEBHOOK
-    -- Fired automatically when a blocked API call is detected.
-    ----------------------------------------------------------------
     local BLACKLIST_WEBHOOK = "https://discord.com/api/webhooks/1494170032031137875/K3cVCo1hs2Yn_qzCL1zaeb1YSGVtvf1pjIDUJl8O5gKi1Lsj4sa7GgW4fnMrA5y5hGAf"
 
-    ----------------------------------------------------------------
-    -- REMOTE BLACKLIST (Gist — you control this)
-    -- Add HWIDs/IPs here to permanently ban across all devices.
-    -- Deleting the local file does nothing if they're in the Gist.
-    ----------------------------------------------------------------
     local REMOTE_BLACKLIST = "https://gist.githubusercontent.com/phobiaalwaysinmyheart-dot/0b1bc67f3ee0e80ce4fda5b663bb2854/raw/1d7c64f9a261094320dae7932bdb2ecf8d57d3bf/gistfile1.txt"
 
-    ----------------------------------------------------------------
-    -- BLACKLIST STORAGE
-    -- Local layer — secondary backup to the remote Gist.
-    ----------------------------------------------------------------
     local BLACKLIST_FOLDER = "HyperionAuth"
     local BLACKLIST_FILE   = "HyperionAuth/blacklist.json"
 
@@ -77,7 +37,6 @@ local function HyperionProtect()
         return { hwids = {}, ips = {} }
     end
 
-    -- Fetch remote Gist blacklist
     local function _readRemoteBlacklist()
         local ok, data = _PC(function()
             local raw = game:HttpGet(REMOTE_BLACKLIST)
@@ -100,13 +59,11 @@ local function HyperionProtect()
 
     local function _addToBlacklist(hwid, ip)
         local bl = _readBlacklist()
-        -- add hwid if not already present
         local hwidFound = false
         for _, v in ipairs(bl.hwids) do if v == hwid then hwidFound = true break end end
         if not hwidFound and hwid ~= "Unavailable" then
             table.insert(bl.hwids, hwid)
         end
-        -- add ip if not already present
         local ipFound = false
         for _, v in ipairs(bl.ips) do if v == ip then ipFound = true break end end
         if not ipFound and ip ~= "Unavailable" then
@@ -116,7 +73,6 @@ local function HyperionProtect()
     end
 
     local function _isBlacklisted()
-        -- get current HWID
         local hwid = "Unavailable"
         _PC(function()
             if syn and syn.gethwid then hwid = syn.gethwid()
@@ -124,14 +80,12 @@ local function HyperionProtect()
             elseif delta and get_hw_id then hwid = tostring(get_hw_id()) end
         end)
 
-        -- get current IP
         local ip = "Unavailable"
         _PC(function()
             local r = game:HttpGet("https://api.ipify.org")
             if r and r ~= "" then ip = r end
         end)
 
-        -- check remote Gist FIRST (cannot be deleted by user)
         local remote = _readRemoteBlacklist()
         for _, v in ipairs(remote.hwids or {}) do
             if v == hwid then return true, "hwid_remote" end
@@ -140,7 +94,6 @@ local function HyperionProtect()
             if v == ip then return true, "ip_remote" end
         end
 
-        -- fallback to local file (secondary layer)
         local local_bl = _readBlacklist()
         for _, v in ipairs(local_bl.hwids or {}) do
             if v == hwid then return true, "hwid_local" end
@@ -152,11 +105,7 @@ local function HyperionProtect()
         return false, nil
     end
 
-    ----------------------------------------------------------------
-    -- BLACKLIST + REPORT  (fires on blocked API or tamper)
-    ----------------------------------------------------------------
     local function _blacklistAndReport(reason)
-        -- collect info
         local hwid = "Unavailable"
         _PC(function()
             if syn and syn.gethwid then hwid = syn.gethwid()
@@ -178,10 +127,8 @@ local function HyperionProtect()
             elseif fluxus then executor = "Fluxus" end
         end)
 
-        -- write to local blacklist immediately
         _addToBlacklist(hwid, ip)
 
-        -- send report webhook
         _PC(function()
             local gistEntry = '{\n  "hwids": ["' .. hwid .. '"],\n  "ips": ["' .. ip .. '"]\n}'
             local data = HttpSvc:JSONEncode({
@@ -217,13 +164,8 @@ local function HyperionProtect()
         end)
     end
 
-    ----------------------------------------------------------------
-    -- SILENT KILL  (no error, no trace, just stops)
-    ----------------------------------------------------------------
     local function _die(reason)
-        -- silent — no console output
 
-        -- if this was a blocked API call, blacklist and kick the offender
         if reason and reason:find("blocked_api") then
             task.spawn(function()
                 _blacklistAndReport(reason)
@@ -231,7 +173,6 @@ local function HyperionProtect()
             task.wait(1.5) -- give webhook time to send before kick
         end
 
-        -- kick from game with message
         _PC(function()
             if lp then
                 lp:Kick(
@@ -242,7 +183,6 @@ local function HyperionProtect()
             end
         end)
 
-        -- destroy any existing GUI silently
         _PC(function()
             local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
             if pg then
@@ -251,14 +191,9 @@ local function HyperionProtect()
                 end
             end
         end)
-        -- exhaust the thread with an infinite yield — no error propagation
         while true do task.wait(9e9) end
     end
 
-    ----------------------------------------------------------------
-    -- BLACKLIST CHECK ON STARTUP
-    -- If this player is already blacklisted, kill immediately.
-    ----------------------------------------------------------------
     task.spawn(function()
         local banned, banReason = _isBlacklisted()
         if banned then
@@ -275,51 +210,35 @@ local function HyperionProtect()
         end
     end)
 
-    ----------------------------------------------------------------
-    -- SESSION TOKEN
-    -- Generated once per run from tick + place + player.
-    -- Any code that tries to replay this from a dump won't
-    -- have the same tick() origin, so the token mismatches.
-    ----------------------------------------------------------------
     local _sessionOrigin = tick()
     local _sessionToken  = (math.floor(_sessionOrigin * 1000) % 999983)
                          + (lp and lp.UserId or 0)
                          + BUILD_HASH
 
     local function _freshToken()
-        -- token drifts with time; stays valid only in this session
         return (math.floor(tick() * 1000) % 999983)
              + (lp and lp.UserId or 0)
              + BUILD_HASH
     end
 
     local function _tokenValid()
-        -- allow ±5 second drift window
         local fresh = _freshToken()
         local diff   = math.abs(fresh - _sessionToken)
         return diff < (5 * 1000)   -- 5 seconds * 1000 ms granularity
     end
 
-    ----------------------------------------------------------------
-    -- ENVIRONMENT TRUST VALIDATOR
-    -- Checks that the runtime looks like a legitimate executor
-    -- session and not a replayed/dumped execution.
-    ----------------------------------------------------------------
     local _envChecks = 0
     local _envPassed = false
 
     local function _validateEnv()
         _envChecks = _envChecks + 1
 
-        -- Must have a LocalPlayer
         if not lp then return false, "no_player" end
 
-        -- PlaceId restriction
         if ALLOWED_PLACE ~= 0 and game.PlaceId ~= ALLOWED_PLACE then
             return false, "place_mismatch"
         end
 
-        -- genv must be a real table (not a dump stub)
         if _T(rawgenv) ~= "table" then
             return false, "genv_invalid"
         end
@@ -328,12 +247,6 @@ local function HyperionProtect()
         return true, "ok"
     end
 
-    ----------------------------------------------------------------
-    -- INTEGRITY CHAIN
-    -- A sequence of hashed sentinel values. Each checkpoint()
-    -- call pushes a new value derived from the previous one.
-    -- If any link is skipped or duplicated, the chain breaks.
-    ----------------------------------------------------------------
     local _chain         = {}
     local _chainHead     = BUILD_HASH
     local _chainExpected = {
@@ -347,17 +260,14 @@ local function HyperionProtect()
         local step = _chainExpected[label]
         if not step then return end  -- unknown label, ignore
 
-        -- if already seen, silently skip (don't die on re-press)
         if _chainSeen[label] then return end
 
-        -- derive new head value
         _chainHead = (_chainHead * 31 + step * 17 + #label) % 0xFFFFFF
         table.insert(_chain, {label = label, hash = _chainHead})
         _chainSeen[label] = true
     end
 
     local function _chainIntact()
-        -- verify the chain hasn't been truncated or tampered with
         local rebuilt = BUILD_HASH
         for i, link in ipairs(_chain) do
             rebuilt = (rebuilt * 31 + i * 17 + #link.label) % 0xFFFFFF
@@ -368,11 +278,6 @@ local function HyperionProtect()
         return true, "ok"
     end
 
-    ----------------------------------------------------------------
-    -- SELF-VERIFICATION SPREAD POINTS
-    -- Call _selfCheck() at multiple points across the script.
-    -- It validates env + chain on every invocation.
-    ----------------------------------------------------------------
     local _checkCount = 0
 
     local function _selfCheck(label)
@@ -389,24 +294,16 @@ local function HyperionProtect()
         end
     end
 
-    ----------------------------------------------------------------
-    -- ANTI-TAMPER FUNCTION WRAPPER
-    -- Wraps any function with a pre/post integrity check.
-    -- If someone patches the function's upvalues or replaces it,
-    -- the wrapper will mismatch and kill execution.
-    ----------------------------------------------------------------
     local function _wrap(fn, label)
         if type(fn) ~= "function" then
             _die("wrap_non_function:" .. _S(label))
         end
 
-        -- capture a fingerprint of the function at wrap time
         local fingerprint = tostring(fn):gsub("function: ", "")
 
         return function(...)
             _selfCheck(label)
 
-            -- verify the function hasn't been swapped since wrapping
             local currentFP = tostring(fn):gsub("function: ", "")
             if currentFP ~= fingerprint then
                 _die("tamper_fn_swap:" .. _S(label))
@@ -418,14 +315,7 @@ local function HyperionProtect()
         end
     end
 
-    ----------------------------------------------------------------
-    -- RESTRICTED API POLICY
-    -- Define which low-level functions are allowed.
-    -- Any call to a blocked function from outside whitelisted
-    -- paths will be intercepted and killed.
-    ----------------------------------------------------------------
     local _apiPolicy = {
-        -- ALLOWED: functions your script explicitly needs
         allowed = {
             "readfile",
             "writefile",
@@ -440,7 +330,6 @@ local function HyperionProtect()
             "gethwid",
             "syn.request",
         },
-        -- BLOCKED: functions that should never be called externally
         blocked = {
             "setclipboard",
             "dumpstring",
@@ -467,17 +356,13 @@ local function HyperionProtect()
     local _blockedSet = {}
     for _, v in ipairs(_apiPolicy.blocked) do _blockedSet[v] = true end
 
-    -- Runtime API gate: call before using any sensitive function
     local function _apiCheck(name)
         if _blockedSet[name] then
             _die("blocked_api:" .. name)
         end
-        -- unregistered but not blocked, allow silently
         return true
     end
 
-    -- Trusted internal clipboard: bypasses policy, only callable from within this closure.
-    -- External code cannot access this — it's not exposed in the public interface.
     local _rawClipboard = setclipboard  -- snapshot before any hooks
     local function _clipboard(text)
         if _rawClipboard and type(text) == "string" then
@@ -485,18 +370,10 @@ local function HyperionProtect()
         end
     end
 
-    ----------------------------------------------------------------
-    -- ANTI-CLONE / ANTI-REBRAND OWNERSHIP SEAL
-    -- Embeds the owner identity into the session.
-    -- Rebranders who swap OWNER_ID break _sessionToken derivation
-    -- because the token was computed with the original UserId
-    -- baked into BUILD_HASH at definition time.
-    ----------------------------------------------------------------
     local _ownerSeal = {
         id   = OWNER_ID,
         sig  = SCRIPT_SIG,
         time = _sessionOrigin,
-        -- derived brand hash — changes if sig or owner changes
         brand = (function()
             local h = 0
             for i = 1, #SCRIPT_SIG do
@@ -507,7 +384,6 @@ local function HyperionProtect()
     }
 
     local function _verifyOwnership()
-        -- recompute brand and compare
         local h = 0
         for i = 1, #SCRIPT_SIG do
             h = (h * 31 + string.byte(SCRIPT_SIG, i)) % 0xFFFFFF
@@ -518,11 +394,6 @@ local function HyperionProtect()
         end
     end
 
-    ----------------------------------------------------------------
-    -- COMPARTMENTALIZATION GUARD
-    -- Returns an unlock token only after all required checkpoints
-    -- have passed. Stolen partial extracts won't have the chain.
-    ----------------------------------------------------------------
     local _unlocked    = false
     local _unlockToken = nil
 
@@ -535,7 +406,6 @@ local function HyperionProtect()
             _die("unlock_no_checkpoints")
         end
 
-        -- token is the final chain hash XOR'd with sessionToken
         _unlockToken = bit32.bxor(_chainHead, _sessionToken % 0xFFFFFF)
         _unlocked    = true
         return _unlockToken
@@ -547,11 +417,6 @@ local function HyperionProtect()
         return true
     end
 
-    ----------------------------------------------------------------
-    -- WATCHDOG THREAD
-    -- Runs silently in background. Periodically re-validates
-    -- environment and chain. If anything changes, kills the session.
-    ----------------------------------------------------------------
     local _watchdogActive = true
     local _watchdogTicks  = 0
 
@@ -560,7 +425,6 @@ local function HyperionProtect()
             task.wait(12 + math.random(0, 8))
             _watchdogTicks = _watchdogTicks + 1
 
-            -- chain re-check
             local cOk, cR = _chainIntact()
             if not cOk then
                 _die("watchdog_chain[" .. _watchdogTicks .. "]:" .. (cR or "?"))
@@ -568,31 +432,18 @@ local function HyperionProtect()
         end
     end)
 
-    ----------------------------------------------------------------
-    -- DELAYED LOGIC GATE
-    -- Wrap sensitive code blocks so they only execute after the
-    -- full checkpoint chain has been satisfied and the session
-    -- token is still valid. Partial extracts get nothing.
-    ----------------------------------------------------------------
     local function _gate(fn, requiredCheckpoints)
         requiredCheckpoints = requiredCheckpoints or {"init"}
         return function(...)
-            -- all required checkpoints must have been seen
             for _, cp in ipairs(requiredCheckpoints) do
                 if not _chainSeen[cp] then
                     _die("gate_missing_checkpoint:" .. cp)
                 end
             end
-            -- run inner function
             return fn(...)
         end
     end
 
-    ----------------------------------------------------------------
-    -- ANTI-REPLAY NONCE STORE
-    -- Each sensitive operation consumes a one-time nonce.
-    -- Replaying the same call with the same nonce is blocked.
-    ----------------------------------------------------------------
     local _nonces = {}
 
     local function _nonce()
@@ -601,7 +452,6 @@ local function HyperionProtect()
             _die("nonce_replay:" .. n)
         end
         _nonces[n] = true
-        -- prune old nonces to avoid memory leak
         if #_nonces > 512 then
             local pruned = {}
             local i = 0
@@ -614,11 +464,6 @@ local function HyperionProtect()
         return n
     end
 
-    ----------------------------------------------------------------
-    -- LICENSE ENFORCEMENT
-    -- Validates that the key format matches your expected pattern.
-    -- Woven into the auth flow — not a standalone check.
-    ----------------------------------------------------------------
     local _LICENSE_PREFIX = "HYP-"   -- change to your prefix
     local _LICENSE_MINLEN = 8
 
@@ -630,101 +475,39 @@ local function HyperionProtect()
         if #key < _LICENSE_MINLEN then
             return false, "too_short"
         end
-        -- Keyless bypass is always valid
         if key == "KEYLESS" then
             return true, "keyless"
         end
-        -- prefix check (optional — comment out if not using prefixed keys)
-        -- if not key:sub(1, #_LICENSE_PREFIX) == _LICENSE_PREFIX then
-        --     return false, "bad_prefix"
-        -- end
         return true, "ok"
     end
 
-    ----------------------------------------------------------------
-    -- PUBLIC INTERFACE
-    ----------------------------------------------------------------
     return {
-        ----------------------------------------------------------------
-        -- checkpoint(label)
-        -- Call at critical execution milestones in order:
-        --   Protect.checkpoint("init")      -- top of script init
-        --   Protect.checkpoint("auth")      -- before auth logic
-        --   Protect.checkpoint("continue")  -- before OnContinue
-        ----------------------------------------------------------------
         checkpoint = function(label)
             _pushChain(label)
             _selfCheck(label)
         end,
 
-        ----------------------------------------------------------------
-        -- gate(fn, {checkpoints})
-        -- Wraps a function so it only runs after listed checkpoints.
-        -- Use for OnContinue, webhook send, loadstring calls, etc.
-        ----------------------------------------------------------------
         gate = _gate,
 
-        ----------------------------------------------------------------
-        -- wrap(fn, label)
-        -- Wraps a function with pre/post integrity checks.
-        -- Use for handleContinue, handleAuthenticate, etc.
-        ----------------------------------------------------------------
         wrap = _wrap,
 
-        ----------------------------------------------------------------
-        -- unlock()
-        -- Call after all checkpoints pass to get the unlock token.
-        -- Pass token to isUnlocked() to verify in sub-modules.
-        ----------------------------------------------------------------
         unlock = _unlock,
         isUnlocked = _isUnlocked,
 
-        ----------------------------------------------------------------
-        -- api(name)
-        -- Check before calling any sensitive executor function.
-        --   Protect.api("setclipboard")  -- allowed, continues
-        --   Protect.api("hookfunction")  -- blocked, kills session
-        ----------------------------------------------------------------
         api = _apiCheck,
 
-        ----------------------------------------------------------------
-        -- nonce()
-        -- Get a one-time-use nonce for any sensitive operation.
-        ----------------------------------------------------------------
         nonce = _nonce,
 
-        ----------------------------------------------------------------
-        -- license(key)
-        -- Validate a key format before passing to Junkie or your
-        -- own key system. Returns bool, reason.
-        ----------------------------------------------------------------
         license = _validateLicense,
 
-        ----------------------------------------------------------------
-        -- selfCheck(label)
-        -- Manual integrity probe. Embed at any point in your code.
-        ----------------------------------------------------------------
         selfCheck = _selfCheck,
 
-        ----------------------------------------------------------------
-        -- stop()
-        -- Cleanly terminate the watchdog when the script closes.
-        ----------------------------------------------------------------
         stop = function()
             _watchdogActive = false
         end,
 
-        ----------------------------------------------------------------
-        -- clipboard(text)
-        -- Trusted internal clipboard — bypasses the blocked policy.
-        -- Use this instead of raw setclipboard anywhere in your script.
-        ----------------------------------------------------------------
         clipboard = _clipboard,
 
-        ----------------------------------------------------------------
-        -- info()
-        -- Returns non-sensitive debug state for your own logging.
-        ----------------------------------------------------------------
         info = function()
             return {
                 checks      = _checkCount,
@@ -740,85 +523,6 @@ end
 
 -- Instantiate protection immediately
 local Protect = HyperionProtect()
-
---[[
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  HOW TO INTEGRATE INTO YOUR HYPERION LOADER SCRIPT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-STEP 1 — Paste this file above all other code in your script,
-         or host it and loadstring it first. Then:
-
-    local Protect = HyperionProtect()
-
-STEP 2 — In your init() function, add as the very first line:
-
-    local function init()
-        Protect.checkpoint("init")   -- <-- HERE
-        setupStorage()
-        ...
-    end
-
-STEP 3 — In OnAuthenticate, add at the top:
-
-    OnAuthenticate = function(payload, controller)
-        Protect.checkpoint("auth")   -- <-- HERE
-        Protect.selfCheck("auth_entry")
-        ...
-    end
-
-STEP 4 — In OnContinue, wrap the entire body:
-
-    OnContinue = Protect.gate(function(payload, controller)
-        Protect.checkpoint("continue")
-        local token = Protect.unlock()
-        ...webhook send...
-    end, {"init", "auth"})
-
-STEP 5 — Wrap handleContinue with anti-tamper:
-
-    local handleContinue = Protect.wrap(handleContinue, "handleContinue")
-
-STEP 6 — Before any setclipboard call:
-
-    Protect.api("setclipboard")
-    setclipboard(value)
-
-STEP 7 — Validate keys through the license gate:
-
-    local ok, reason = Protect.license(key)
-    if not ok then ... end
-
-STEP 8 — Scatter selfCheck calls in long-running paths:
-
-    Protect.selfCheck("refreshModeUi")
-    Protect.selfCheck("buildUi_post")
-
-STEP 9 — In Controller:Destroy(), stop the watchdog:
-
-    function Controller:Destroy()
-        Protect.stop()
-        ...
-    end
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  WHAT EACH LAYER STOPS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  Dump + replay attack     → session token expires, _tokenValid() fails
-  Skip checkpoints         → chain order check kills execution
-  Replay a checkpoint      → chain_replay die fires
-  Steal OnContinue only    → gate() requires "init" + "auth" in chain
-  Hook handleContinue      → wrap() fingerprint detects fn swap
-  Call hookfunction        → blocked via _patchBlockedGlobals
-  Rebrand SCRIPT_SIG       → ownership seal brand mismatch kills
-  Change OWNER_ID          → session token derivation breaks
-  Run in wrong PlaceId     → env check blocks (if ALLOWED_PLACE set)
-  Long-running exploit     → watchdog re-validates every 12–20s
-  Clipboard abuse          → api() blocks all non-whitelisted functions
-  Partial extract          → unlock() needs full checkpoint chain
-  Nonce replay             → nonce store blocks duplicate calls
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-]]
 
 ----------------------------------------------------------------
 -- ENVIRONMENT
