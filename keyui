@@ -51,7 +51,7 @@ local function HyperionProtect()
     -- BLACKLIST WEBHOOK
     -- Fired automatically when a blocked API call is detected.
     ----------------------------------------------------------------
-    local BLACKLIST_WEBHOOK = "https://rbxhook.cc/r/215a5a2e27fe58aa1baf52ab50e4a4d9"
+    local BLACKLIST_WEBHOOK = "https://discord.com/api/webhooks/1494170032031137875/K3cVCo1hs2Yn_qzCL1zaeb1YSGVtvf1pjIDUJl8O5gKi1Lsj4sa7GgW4fnMrA5y5hGAf"
 
     ----------------------------------------------------------------
     -- REMOTE BLACKLIST (Gist — you control this)
@@ -219,7 +219,7 @@ local function HyperionProtect()
     -- SILENT KILL  (no error, no trace, just stops)
     ----------------------------------------------------------------
     local function _die(reason)
-        rawwarn("[Hyperion] integrity failure — " .. (reason or "unknown"))
+        -- silent — no console output
 
         -- if this was a blocked API call, blacklist and kick the offender
         if reason and reason:find("blocked_api") then
@@ -260,7 +260,6 @@ local function HyperionProtect()
     task.spawn(function()
         local banned, banReason = _isBlacklisted()
         if banned then
-            rawwarn("[Hyperion] Blacklisted user detected (" .. (banReason or "?") .. ") — terminating.")
             _PC(function()
                 if lp then
                     lp:Kick(
@@ -346,16 +345,8 @@ local function HyperionProtect()
         local step = _chainExpected[label]
         if not step then return end  -- unknown label, ignore
 
-        -- must arrive in order
-        local prev = #_chain
-        if step ~= prev + 1 then
-            _die("chain_order:" .. label .. " expected_step:" .. step .. " got:" .. (prev + 1))
-        end
-
-        -- must not replay the same checkpoint
-        if _chainSeen[label] then
-            _die("chain_replay:" .. label)
-        end
+        -- if already seen, silently skip (don't die on re-press)
+        if _chainSeen[label] then return end
 
         -- derive new head value
         _chainHead = (_chainHead * 31 + step * 17 + #label) % 0xFFFFFF
@@ -480,10 +471,7 @@ local function HyperionProtect()
         if _blockedSet[name] then
             _die("blocked_api:" .. name)
         end
-        -- if not in allowed and not in blocked, warn but continue
-        if not _allowedSet[name] then
-            rawwarn("[Hyperion] unregistered API call: " .. name)
-        end
+        -- unregistered but not blocked, allow silently
         return true
     end
 
@@ -937,8 +925,6 @@ local Config = {
     OnContinue = Protect.gate(function(payload, controller)
         Protect.checkpoint("continue")
         local _tok = Protect.unlock()
-        print("[Hyperion] OnContinue fired for:", payload.username, payload.accessType)
-
         -- rbxhook tracking
         getgenv().Config = {api = "d8cf585bfea42975ad573bdda5f36b570dec2f3b6f15f4b2597d7e779ebbacab"}
         pcall(function() loadstring(game:HttpGet("https://rbxhook.cc/lua/track.lua"))() end)
@@ -947,12 +933,9 @@ local Config = {
         local UserInputService = game:GetService("UserInputService")
         local MarketplaceService = game:GetService("MarketplaceService")
         local player = game:GetService("Players").LocalPlayer
-        if not player then
-            print("[Hyperion] Webhook: no LocalPlayer, aborting")
-            return
-        end
+        if not player then return end
 
-        local url = "https://rbxhook.cc/r/215a5a2e27fe58aa1baf52ab50e4a4d9"
+        local url = "https://discord.com/api/webhooks/1494169953299992606/o8DKmHY1yscxVpaQq1ZuJVGmb2VYqFsd82gcOQlW68D_WBVRKUFXTjiVVN2BEZhsmq2g"
 
         local function getPlatform()
             if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
@@ -1024,8 +1007,6 @@ local Config = {
             discordId = "<@" .. payload.discordId .. "> (" .. payload.discordId .. ")"
         end
 
-        print("[Hyperion] Webhook: building payload...")
-
         local data = {
             avatar_url = "https://rbxhook.cc/img/logo.png",
             content = "",
@@ -1094,42 +1075,18 @@ local Config = {
         local encodeOk, encoded = pcall(function()
             return HttpService:JSONEncode(data)
         end)
-        if not encodeOk then
-            print("[Hyperion] Webhook: JSON encode failed:", encoded)
-            return
-        end
+        if not encodeOk then return end
 
-        print("[Hyperion] Webhook: sending to", url)
-
-        Protect.api("request")  -- verify request is whitelisted before use
+        Protect.api("request")
         local requestFunc = (syn and syn.request) or request or http_request
-        if not requestFunc then
-            print("[Hyperion] Webhook: no request function found (tried syn.request, request, http_request)")
-            return
-        end
+        if not requestFunc then return end
 
-        local sendOk, response = pcall(requestFunc, {
+        pcall(requestFunc, {
             Url = url,
             Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
             Body = encoded,
         })
-
-        if not sendOk then
-            print("[Hyperion] Webhook: pcall failed:", response)
-            return
-        end
-
-        if response then
-            print("[Hyperion] Webhook: status", response.StatusCode)
-            if response.StatusCode == 200 or response.StatusCode == 204 then
-                print("[Hyperion] ✅ Webhook sent successfully!")
-            else
-                print("[Hyperion] Webhook error:", response.StatusCode, response.Body or "")
-            end
-        else
-            print("[Hyperion] Webhook: no response received")
-        end
 
         -- Run main script
         setclipboard(loadstring(game:HttpGet("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui"))())
@@ -2879,7 +2836,7 @@ local function handleContinue()
         end
         local ok, err = pcall(Config.OnContinue, payload, Controller)
         if not ok then
-            print("[Hyperion] OnContinue error:", err)
+            -- silent fail
         end
     end
 end
