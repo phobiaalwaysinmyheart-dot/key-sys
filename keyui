@@ -232,17 +232,10 @@ local function HyperionProtect()
 
     local function _validateEnv()
         _envChecks = _envChecks + 1
-
         if not lp then return false, "no_player" end
-
         if ALLOWED_PLACE ~= 0 and game.PlaceId ~= ALLOWED_PLACE then
             return false, "place_mismatch"
         end
-
-        if _T(rawgenv) ~= "table" then
-            return false, "genv_invalid"
-        end
-
         _envPassed = true
         return true, "ok"
     end
@@ -302,15 +295,12 @@ local function HyperionProtect()
         local fingerprint = tostring(fn):gsub("function: ", "")
 
         return function(...)
-            _selfCheck(label)
-
             local currentFP = tostring(fn):gsub("function: ", "")
             if currentFP ~= fingerprint then
                 _die("tamper_fn_swap:" .. _S(label))
             end
 
             local results = table.pack(fn(...))
-            _selfCheck(label .. "_post")
             return table.unpack(results, 1, results.n)
         end
     end
@@ -484,7 +474,6 @@ local function HyperionProtect()
     return {
         checkpoint = function(label)
             _pushChain(label)
-            _selfCheck(label)
         end,
 
         gate = _gate,
