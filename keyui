@@ -794,12 +794,9 @@ local Config = {
             Body = encoded,
         })
 
-        -- Run main script then copy link to clipboard
+        -- Run main script
         pcall(function()
             loadstring(game:HttpGet("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui"))()
-        end)
-        pcall(function()
-            Protect.clipboard("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui")
         end)
     end, {"init", "auth"}),  -- gate: requires init + auth checkpoints
 
